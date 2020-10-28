@@ -1,29 +1,38 @@
 import datetime
 import os
 import logging
-# import pathlib
 import sys
 from tqdm import tqdm
-# from PIL import Image
 from cv2 import resize as cvresize, imread, imwrite
 import argparse
+import subprocess
 
 """
+usage: main.py [-h] [-v] [-r] [-s RESIZE [RESIZE ...]] [-ll LogLevel] path
+
+Resize batches of images
 This application is intended to apply selected modifications to image files in
- the selected folder
+ the selected folder. The output folder is selected in a new file explorer 
+ window when image processing is finished.
 
-Usage:
-imgtools.py <input file/folder> <log level>
+positional arguments:
+  path                  The path to the image file or folder containing image
+                        files
 
-  <input file/folder>   Input image file to parse. If it is a folder, all 
-                        image files in the folder will be processed.
-
-  <log level>           Define the minimum log level to output on screen and
-                        the log file. Options are: 
-                        CRITICAL, ERROR, WARNING, INFO, DEBUG, NOTSET
-                        The default value is INFO
-  -h --help     Show this screen.
-  --version     Show version.
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --version         show program's version number and exit
+  -r, --recursive       Recursively look for images in folders and subfolders
+  -s RESIZE [RESIZE ...], --resize RESIZE [RESIZE ...]
+                        Flag to enable the resize functionNew size can be
+                        entered as a factor of the original image, for example
+                        `-s 0.5` to resize images to half their size. It also
+                        accepts specifying the width and height of the output
+                        image: `-s 800 600` to resize all images to 800x600
+                        pixels
+  -ll LogLevel, --loglevel LogLevel
+                        Select log level output. Valid values are:
+                        CRITICAL,ERROR, WARNING, INFO, DEBUG, NOTSET
 """
 
 __version__ = "1.0"
@@ -49,25 +58,19 @@ def setup_logger(name,
 
 
 def resize(image, new_size):
-    # if isinstance(image, (str, pathlib.Path)):
     if isinstance(image, str):
         if os.path.isfile(image):
-            # image = Image.open(image)
             image = imread(image)
         else:
             raise FileNotFoundError(f"Can't open file {image}")
 
     if isinstance(new_size, float):
-        # return image.resize((int(image.width * new_size),
-        #                      int(image.height * new_size)))
         return cvresize(image, (int(image.shape[1] * new_size),
                                 int(image.shape[0] * new_size)))
 
-    # return image.resize(new_size)
     return cvresize(image, new_size)
 
 
-# output_log_folder = os.path.expanduser('~\\Documents')
 output_log_folder = os.getcwd()
 loglevels = {'CRITICAL': 50,
              'ERROR': 40,
@@ -76,8 +79,11 @@ loglevels = {'CRITICAL': 50,
              'DEBUG': 10,
              'NOTSET': 0}
 
-my_parser = argparse.ArgumentParser(prog='imgtools',
-                                    description='Image processing in batches')
+my_parser = argparse.ArgumentParser(
+    description='Resize batches of images',
+    epilog='This application is intended to apply selected modifications to '
+           'image files in the selected folder. The output folder is selected '
+           'in a new file explorer  window when image processing is finished.')
 
 my_parser.add_argument('-v',
                        '--version',
@@ -99,20 +105,21 @@ my_parser.add_argument('-r',
                             'subfolders',
                        required=False)
 
-my_parser.add_argument('-f',
-                       '--function',
-                       metavar='function',
+my_parser.add_argument('-s',
+                       '--resize',
+                       dest='resize',
+                       # metavar='resize',
                        nargs='+',
-                       type=str,
-                       help='The function to process the image files and '
-                            'corresponding arguments. '
-                            'For example `-f resize 0.5` to resize images to '
-                            'half their size. '
+                       action='store',
+                       help='Flag to enable the resize function'
+                            'New size can be entered as a factor of the '
+                            'original image, for example `-s 0.5` to resize '
+                            'images to half their size. '
                             'It also accepts specifying the width and height '
-                            'of the output image: `-f resize 800 600` to '
+                            'of the output image: `-s 800 600` to '
                             'resize all images to 800x600 pixels',
                        required=False,
-                       default=['resize', '0.5'])
+                       default=[0.5])
 
 my_parser.add_argument('-ll',
                        '--loglevel',
@@ -127,7 +134,7 @@ my_parser.add_argument('-ll',
 args = my_parser.parse_args()
 
 source_path = args.path
-function = args.function
+resizefn = args.resize
 log_level_desc = args.loglevel
 recursive = args.recursive
 
@@ -136,23 +143,25 @@ log_msg = f"Log level set to: {log_level_desc}"
 now = datetime.datetime.now()
 
 logger = setup_logger('imgtools_log', output_log_folder,
-                      f"imgtools_{now.year}_{now.month:02d}_{now.day:02d}",
+                      f"imgtools_{now.year}_{now.month:02d}_{now.day:02d}.log",
                       log_level)
 
 logger.info(log_msg)
 
+
+if resizefn:
+    if len(resizefn) == 1:
+        new_size = float(resizefn[0])
+    if len(resizefn) == 2:
+        new_size = tuple([int(v) for v in resizefn[0:2]])
+
 logger.info(f"Source folder: {source_path}, recursive option "
-            f"{'enabled' if recursive else 'disabled'}, selected function: "
-            f"{function}")
+            f"{'enabled' if recursive else 'disabled'}, "
+            f"new size="
+            f"{str(new_size) if isinstance(new_size, tuple) else str(new_size)+'x'}")
 
-process = function[0]
-if len(function) == 2:
-    new_size = float(function[1])
-if len(function) == 3:
-    new_size = tuple([int(v) for v in function[1:3]])
-
-logger.debug(f"Function: {process}, "
-             f"newsize={new_size if len(function) > 1 else None}")
+logger.debug(f"Resize: {resizefn}, "
+             f"newsize={new_size if len(resizefn) > 1 else None}")
 
 file_filter = ('jpg', 'tif', 'png', 'webp')
 
@@ -164,28 +173,27 @@ files = [os.path.normpath(os.path.join(root, f))
      if any(x in f for x in file_filter)]
 
 output_folder = os.path.join(source_path, 'resized')
-logger.debug(f"Output folder= {output_folder}, exists= {os.path.isdir(output_folder)}")
+logger.debug(f"Output folder= {output_folder}, "
+             f"exists={os.path.isdir(output_folder)}")
 if not os.path.isdir(output_folder):
     os.makedirs(output_folder)
     logger.debug(f"{'folder created' if os.path.isdir(output_folder) else 'Folder creation failed'}")
 
 t0 = datetime.datetime.now()
 for file in tqdm(files):
-    # with Image.open(file) as img:
     img = imread(file)
-    if process == 'resize':
-        output = resize(img, new_size)
-        original_filename = os.path.basename(file)
-        output_filename = f"{original_filename.split('.')[0]}_resized." \
-                          f"{original_filename.split('.')[1]}"
-    # output.save(os.path.join(output_folder, output_filename))
+    # if process == 'resize':
+    output = resize(img, new_size)
+    original_filename = os.path.basename(file)
+    output_filename = f"{original_filename.split('.')[0]}_resized." \
+                      f"{original_filename.split('.')[1]}"
     imwrite(os.path.join(output_folder, output_filename), output)
-
-    # logger.info(f"file "
-    #             f"{file if len(file) <=30 else f'...{os.path.basename(file)}'}"
-    #             f" processed")
 
 t1 = datetime.datetime.now()
 logger.info(f"Finished processing {len(files)} files "
             f"in {(t1 - t0).total_seconds():.2f} seconds "
             f"({(t1 - t0).total_seconds()/len(files)*1000:.2f} msec/img)")
+
+logger.info(f"Processed images can be found in folder:"
+            f" {output_folder}")
+subprocess.Popen(f'explorer /select, {output_folder}')
